@@ -31,6 +31,10 @@ load_dotenv()
 def index():
     return "<h1>Your Flask server is running!</h1>"
 
+@app.route("/health")
+def health():
+    return jsonify({"status": "healthy", "model": LOCAL_EMBEDDING_MODEL, "dimension": EMBEDDING_DIM})
+
 @app.route('/favicon.ico')
 def favicon():
     return send_from_directory(os.path.join(app.root_path, 'static'),
@@ -153,7 +157,7 @@ def parse_topics_universal(text):
 
 # -------------------- TEXT CHUNKING --------------------
 
-def chunk_text(text, max_chars=1500, overlap=200):
+def chunk_text(text, max_chars=2000, overlap=150):
     if not text or len(text) <= max_chars:
         return [text] if text else []
 
@@ -194,15 +198,15 @@ def generate_embeddings_local(class_level, subject, topics, fallback_texts=None,
     if full_text and topics:
         print(f"📊 Processing {len(topics)} topics with local model...")
         
-        # Limit topics if too many to avoid timeout
-        max_topics = 50  # Process max 50 topics to avoid timeout
+        # Limit topics if too many to avoid timeout on Render (30 sec limit)
+        max_topics = 30  # Process max 30 topics to stay under Render timeout
         if len(topics) > max_topics:
             print(f"⚠️ Too many topics ({len(topics)}). Processing first {max_topics} to avoid timeout.")
             topics = topics[:max_topics]
 
         for topic_idx, topic in enumerate(topics):
-            # Progress indicator
-            if topic_idx % 5 == 0:
+            # Progress indicator (less frequent to speed up)
+            if topic_idx % 10 == 0:
                 print(f"  📍 Progress: {topic_idx}/{len(topics)} topics processed...")
             
             topic_text = f"{class_level} | {subject} | {topic}"
@@ -227,9 +231,9 @@ def generate_embeddings_local(class_level, subject, topics, fallback_texts=None,
         texts = [f"{class_level} | {subject} | {t}" for t in topics] or fallback_texts
         
         # Limit fallback texts too
-        if len(texts) > 50:
-            print(f"⚠️ Too many texts ({len(texts)}). Processing first 50.")
-            texts = texts[:50]
+        if len(texts) > 30:
+            print(f"⚠️ Too many texts ({len(texts)}). Processing first 30.")
+            texts = texts[:30]
 
         for idx, text in enumerate(texts):
             if idx % 10 == 0:
@@ -435,4 +439,5 @@ CRITICAL: Return ONLY the JSON array, no explanations or text outside JSON."""
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5001"))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    debug_mode = os.getenv("FLASK_ENV", "production") == "development"
+    app.run(host="0.0.0.0", port=port, debug=debug_mode, threaded=True)
