@@ -5,3 +5,4 @@ sentence-transformers==2.2.2
 groq==0.9.0
 python-dotenv==1.0.1
 httpx<0.28
+gunicorn==21.2.0
