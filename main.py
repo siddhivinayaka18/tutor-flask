@@ -8,15 +8,15 @@ import json
 import requests
 from dotenv import load_dotenv
 
-# -------------------- LOCAL EMBEDDING MODEL --------------------
-from sentence_transformers import SentenceTransformer
+# -------------------- HUGGING FACE EMBEDDING API --------------------
 
-# Load local embedding model (384 dimensions)
-LOCAL_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-local_model = SentenceTransformer(LOCAL_EMBEDDING_MODEL)
+# Use Hugging Face Inference API instead of local model
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_DIM = 384  # MiniLM-L6-v2 output size
+HF_API_URL = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{EMBEDDING_MODEL}"
 
-print("✅ Local embedding model initialized:", LOCAL_EMBEDDING_MODEL)
+# Get HF API token from environment
+HF_TOKEN = os.getenv("HF_TOKEN")# Set this in your .env or Hugging Face Space secrets
 
 # -------------------- APP SETUP --------------------
 
@@ -33,7 +33,7 @@ def index():
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "healthy", "model": LOCAL_EMBEDDING_MODEL, "dimension": EMBEDDING_DIM})
+    return jsonify({"status": "healthy", "model": EMBEDDING_MODEL, "dimension": EMBEDDING_DIM, "api": "huggingface"})
 
 @app.route('/favicon.ico')
 def favicon():
@@ -157,7 +157,7 @@ def parse_topics_universal(text):
 
 # -------------------- TEXT CHUNKING --------------------
 
-def chunk_text(text, max_chars=2000, overlap=150):
+def chunk_text(text, max_chars=1500, overlap=200):
     if not text or len(text) <= max_chars:
         return [text] if text else []
 
@@ -180,40 +180,60 @@ def chunk_text(text, max_chars=2000, overlap=150):
     return chunks
 
 
-# -------------------- LOCAL EMBEDDING GENERATION --------------------
+# -------------------- HUGGING FACE API EMBEDDING GENERATION --------------------
 
-def generate_embedding_local(text):
-    """Generate local embedding using MiniLM-L6-v2 (384 dimensions)"""
+def generate_embedding_hf_api(text):
+    """Generate embedding using Hugging Face Inference API (384 dimensions)"""
     try:
-        embedding = local_model.encode(text).tolist()
-        return embedding
+        headers = {}
+        if HF_TOKEN:
+            headers["Authorization"] = f"Bearer {HF_TOKEN}"
+        
+        response = requests.post(
+            HF_API_URL,
+            headers=headers,
+            json={"inputs": text, "options": {"wait_for_model": True}},
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            embedding = response.json()
+            # Handle different response formats
+            if isinstance(embedding, list) and len(embedding) > 0:
+                if isinstance(embedding[0], list):
+                    return embedding[0]  # Return first embedding if batch
+                return embedding
+            return embedding
+        else:
+            print(f"❌ HF API error: {response.status_code} - {response.text}")
+            return None
     except Exception as e:
-        print("❌ Local embedding error:", e)
+        print("❌ Embedding API error:", e)
         return None
 
 
-def generate_embeddings_local(class_level, subject, topics, fallback_texts=None, full_text=""):
+def generate_embeddings_hf(class_level, subject, topics, fallback_texts=None, full_text=""):
     items = []
 
     if full_text and topics:
-        print(f"📊 Processing {len(topics)} topics with local model...")
+        print(f"📊 Processing {len(topics)} topics with HF API...")
         
-        # Limit topics if too many to avoid timeout on Render (30 sec limit)
-        max_topics = 30  # Process max 30 topics to stay under Render timeout
+        # Limit topics if too many to avoid rate limits
+        max_topics = 50  # Process max 50 topics
         if len(topics) > max_topics:
-            print(f"⚠️ Too many topics ({len(topics)}). Processing first {max_topics} to avoid timeout.")
+            print(f"⚠️ Too many topics ({len(topics)}). Processing first {max_topics}.")
             topics = topics[:max_topics]
 
         for topic_idx, topic in enumerate(topics):
-            # Progress indicator (less frequent to speed up)
-            if topic_idx % 10 == 0:
+            # Progress indicator
+            if topic_idx % 5 == 0:
                 print(f"  📍 Progress: {topic_idx}/{len(topics)} topics processed...")
             
             topic_text = f"{class_level} | {subject} | {topic}"
             chunks = chunk_text(topic_text)
 
             for chunk_idx, chunk in enumerate(chunks):
-                embedding = generate_embedding_local(chunk)
+                embedding = generate_embedding_hf_api(chunk)
 
                 if embedding:
                     items.append({
@@ -226,20 +246,20 @@ def generate_embeddings_local(class_level, subject, topics, fallback_texts=None,
                         "embedding": embedding
                     })
 
-        print(f"✅ Generated {len(items)} local embeddings from {len(topics)} topics")
+        print(f"✅ Generated {len(items)} HF API embeddings from {len(topics)} topics")
     else:
         texts = [f"{class_level} | {subject} | {t}" for t in topics] or fallback_texts
         
         # Limit fallback texts too
-        if len(texts) > 30:
-            print(f"⚠️ Too many texts ({len(texts)}). Processing first 30.")
-            texts = texts[:30]
+        if len(texts) > 50:
+            print(f"⚠️ Too many texts ({len(texts)}). Processing first 50.")
+            texts = texts[:50]
 
         for idx, text in enumerate(texts):
             if idx % 10 == 0:
                 print(f"  📍 Progress: {idx}/{len(texts)} embeddings...")
                 
-            embedding = generate_embedding_local(text)
+            embedding = generate_embedding_hf_api(text)
             if embedding:
                 items.append({
                     "class": class_level,
@@ -299,9 +319,9 @@ def parse_file():
 
         fallback_lines = [line.strip() for line in text.split('\n') if line.strip()][:10]
 
-        print("🧠 Step 4: Generating embeddings with LOCAL model (MiniLM-L6-v2, 384 dims)")
+        print("🧠 Step 4: Generating embeddings with HF API (MiniLM-L6-v2, 384 dims)")
         embed_start = time.time()
-        items = generate_embeddings_local(
+        items = generate_embeddings_hf(
             class_level,
             subject,
             topics,
@@ -439,5 +459,5 @@ CRITICAL: Return ONLY the JSON array, no explanations or text outside JSON."""
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5001"))
-    debug_mode = os.getenv("FLASK_ENV", "production") == "development"
+    debug_mode = os.getenv("FLASK_DEBUG", "False").lower() == "true"
     app.run(host="0.0.0.0", port=port, debug=debug_mode, threaded=True)
