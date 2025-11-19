@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 # Use Hugging Face Inference API instead of local model
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_DIM = 384  # MiniLM-L6-v2 output size
-HF_API_URL = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{EMBEDDING_MODEL}"
+HF_API_URL = f"https://router.huggingface.co/hf-inference/pipeline/feature-extraction/{EMBEDDING_MODEL}"
 
 # Get HF API token from environment
 HF_TOKEN = os.getenv("HF_TOKEN")# Set this in your .env or Hugging Face Space secrets
